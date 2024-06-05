@@ -7,43 +7,55 @@ from tensorflow.keras.preprocessing import image
 from tensorflow.keras.applications.inception_resnet_v2 import preprocess_input
 from werkzeug.utils import secure_filename
 
-predict = Blueprint('predict', __name__, url_prefix='/predict')
+# Importing necessary libraries
+import nltk
+import pandas as pd
+import numpy as np
+from textblob import Word
+from nltk.corpus import stopwords
+from sklearn.preprocessing import LabelEncoder
+from keras.models import Sequential
+from keras.preprocessing.text import Tokenizer
+from keras.preprocessing.sequence import pad_sequences
 
-model = load_model("src/model/model15.h5", compile=False)
+predict = Blueprint("predict", __name__, url_prefix="/ai")
 
-def prepare_image(img_path, target_size=(299, 299)):
-    img = image.load_img(img_path, target_size=target_size)
-    img_array = image.img_to_array(img)
-    img_array = np.expand_dims(img_array, axis=0)
-    img_array = preprocess_input(img_array)
-    return img_array
+model = load_model("src/model/model1.h5", compile=False)
+stop_words = stopwords.words("english")
 
-@predict.route('/', methods=['POST'])
-def predict_image():
+
+def cleaning(text):
+    # Convert to lowercase
+    text = " ".join(x.lower() for x in text.split())
+    # Replacing the digits/numbers
+    text = "".join([i for i in text if not i.isdigit()])
+    # Removing stop words
+    text = " ".join(x for x in text.split() if x not in stop_words)
+    # Lemmatization
+    text = " ".join([Word(x).lemmatize() for x in text.split()])
+    return text
+
+
+@predict.route("/sentiment", methods=["POST"])
+def sentiment():
     try:
-        if 'img' not in request.files:
-            return jsonify({"message": "No file part"}), 400
-        
-        file = request.files['img']
-        if file.filename == '':
-            return jsonify({"message": "No selected file"}), 400
-        
-        if file:
-            filename = secure_filename(file.filename)
-            file_path = os.path.join('src/static/uploads', filename)
-            file.save(file_path)
+        data = request.get_json()
+        text = data.get("text", "")
+        text = cleaning(text)
+        max_words = 1000
+        max_len = 1008
+        tokenizer = Tokenizer(num_words=max_words)
+        tokenizer.fit_on_texts([text])
+        sequence = tokenizer.texts_to_sequences([text])
+        padded_sequence = pad_sequences(sequence, maxlen=max_len)
+        predictions = model.predict(padded_sequence)
 
-            img_array = prepare_image(file_path)
-            predictions = model.predict(img_array)
-            predicted_class_index = np.argmax(predictions, axis=1)[0]
-            name_class = ["akiec", "bcc", "bkl", "df", "mel", "nv", "vasc"]
-            result = name_class[predicted_class_index]
+        print(predictions)
 
-            # Xóa tệp sau khi dự đoán
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                
-            return jsonify({"result": result})
+        labels = ["POSITIVE", "NEURAL", "NEGATIVE"]
+        predicted_labels = predictions.argmax(axis=-1)
+        result = labels[predicted_labels[0]]
+        return jsonify({"result": result})
     except Exception as e:
         print(e)
         return jsonify({"message": "An error occurred during prediction"}), 500
